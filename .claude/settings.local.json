@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -m streamlit run app.py --server.headless true)",
+      "Bash(taskkill //F //IM streamlit.exe)",
+      "Bash(pkill -f streamlit)",
+      "Bash(python -m streamlit run app.py)",
+      "Bash(pkill -f \"streamlit run\")",
+      "Bash(python -c \"import utils; print\\(utils.__file__\\); print\\(hasattr\\(utils, 'BANCOS_DISPONIVEIS'\\)\\)\")",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(python -c \"from utils import ler_arquivo, validar_planilha_leads, validar_planilha_vendas, preparar_leads, preparar_vendas, cruzar_leads_vendas, gerar_relatorio_excel; print\\('OK: utils imports'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(taskkill //F //IM python3.exe)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
+      "Bash(rm -rf \"/c/Users/Dell Latitude 3410/Desktop/Relatório_Leads/__pycache__\")",
+      "Bash(python -c \"from utils import gerar_relatorio_pdf; print\\('Import OK'\\)\")",
+      "Bash(python -m streamlit run app.py --server.port 8501)",
+      "Bash(start http://localhost:8501)",
+      "Bash(python -c \"import weasyprint; print\\('weasyprint OK:', weasyprint.__version__\\)\")",
+      "Bash(python -c \"import kaleido; print\\('kaleido OK:', kaleido.__version__\\)\")",
+      "Bash(python *)"
+    ]
+  }
+}
