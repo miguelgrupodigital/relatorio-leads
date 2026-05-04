@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import re
 import io
-import base64
 from datetime import date
 from typing import Optional
 from openpyxl import Workbook
@@ -784,47 +783,6 @@ def _fmt_brl_pdf(valor) -> str:
         return "R$ 0,00"
 
 
-def _df_to_html_table(df: pd.DataFrame, max_rows: int = 0, tema: str = "light") -> str:
-    is_dark = tema == "dark"
-    header_bg = "#2A8B5F" if not is_dark else "#3FB57E"
-    even_bg = "#F8F9FA" if not is_dark else "#2A2D35"
-    odd_bg = "#FFFFFF" if not is_dark else "#252930"
-    text_color = "#2D3436" if not is_dark else "#E8E8E8"
-    border_color = "#E8ECEF" if not is_dark else "#3A3F47"
-
-    rows = df.head(max_rows) if max_rows > 0 else df
-    html = f'<table style="width:100%;border-collapse:collapse;font-size:10px;margin:10px 0;">'
-    html += "<thead><tr>"
-    for col in rows.columns:
-        html += f'<th style="background:{header_bg};color:#FFF;padding:8px 10px;text-align:left;border:1px solid {border_color};">{col}</th>'
-    html += "</tr></thead><tbody>"
-    for i, (_, row) in enumerate(rows.iterrows()):
-        bg = even_bg if i % 2 == 0 else odd_bg
-        html += f'<tr style="background:{bg};">'
-        for col in rows.columns:
-            val = row[col]
-            if isinstance(val, float):
-                if "%" in col or "Taxa" in col or "Conversão" in col:
-                    display = f"{val:.1f}%"
-                elif "Valor" in col or "Ticket" in col or "Médio" in col:
-                    display = _fmt_brl_pdf(val)
-                else:
-                    display = f"{val:,.0f}".replace(",", ".")
-            else:
-                display = str(val) if pd.notna(val) else ""
-            html += f'<td style="padding:6px 10px;color:{text_color};border:1px solid {border_color};">{display}</td>'
-        html += "</tr>"
-    html += "</tbody></table>"
-    return html
-
-
-def _embed_chart(chart_images: dict, key: str) -> str:
-    if key not in chart_images or not chart_images[key]:
-        return ""
-    b64 = base64.b64encode(chart_images[key]).decode("utf-8")
-    return f'<div style="text-align:center;margin:15px 0;"><img src="data:image/png;base64,{b64}" style="max-width:100%;height:auto;" /></div>'
-
-
 def gerar_relatorio_pdf(
     resumo_geral: dict,
     por_banco: pd.DataFrame,
@@ -835,187 +793,241 @@ def gerar_relatorio_pdf(
     tema: str = "light",
     chart_images: Optional[dict] = None,
 ) -> bytes:
-    try:
-        from xhtml2pdf import pisa
-    except ImportError:
-        raise ImportError("xhtml2pdf não está instalado. Execute: pip install xhtml2pdf")
+    from fpdf import FPDF
 
     if chart_images is None:
         chart_images = {}
 
     is_dark = tema == "dark"
-    verde = "#4ECB8E" if is_dark else "#3FB57E"
-    verde_escuro = "#3FB57E" if is_dark else "#2A8B5F"
-    texto = "#E8E8E8" if is_dark else "#2D3436"
-    texto_sec = "#A0A0A0" if is_dark else "#95A5A6"
-    fundo = "#1A1D23" if is_dark else "#FFFFFF"
-    card_bg = "#252930" if is_dark else "#F8F9FA"
-    borda = "#3A3F47" if is_dark else "#E8ECEF"
+
+    if is_dark:
+        cor_fundo = (26, 29, 35)
+        cor_texto = (232, 232, 232)
+        cor_texto_sec = (160, 160, 160)
+        cor_verde = (78, 203, 142)
+        cor_verde_escuro = (63, 181, 126)
+        cor_card = (37, 41, 48)
+        cor_row_even = (37, 41, 48)
+        cor_row_odd = (26, 29, 35)
+        cor_borda = (58, 63, 71)
+    else:
+        cor_fundo = (255, 255, 255)
+        cor_texto = (45, 52, 54)
+        cor_texto_sec = (149, 165, 166)
+        cor_verde = (63, 181, 126)
+        cor_verde_escuro = (42, 139, 95)
+        cor_card = (248, 249, 250)
+        cor_row_even = (248, 249, 250)
+        cor_row_odd = (255, 255, 255)
+        cor_borda = (224, 224, 224)
 
     data_rel = resumo_geral.get("Data do Relatório", "")
 
-    total_leads = resumo_geral.get("Total de Leads", 0)
-    convertidos = resumo_geral.get("Leads Convertidos", 0)
-    total_vendas = resumo_geral.get("Total de Vendas", 0)
-    taxa = resumo_geral.get("Taxa de Conversão (%)", 0)
-    valor_total = resumo_geral.get("Valor Total Liberado", 0)
-    ticket = resumo_geral.get("Ticket Médio", 0)
-    bancos_ativos = resumo_geral.get("Bancos Ativos", 0)
-    vendedores_ativos = resumo_geral.get("Vendedores Ativos", 0)
+    class RelatorioPDF(FPDF):
+        def header(self):
+            self.set_font("helvetica", "I", 8)
+            self.set_text_color(*cor_texto_sec)
+            self.cell(0, 6, f"Grupo Digital - Soluções Financeiras  |  {data_rel}", align="C")
+            self.ln(4)
+            self.set_draw_color(*cor_borda)
+            self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
+            self.ln(4)
 
-    def _metric_cell(label: str, value) -> str:
-        return (
-            f'<td style="width:25%;padding:6px;">'
-            f'<div style="background:{card_bg};border:1px solid {borda};'
-            f'border-left:4px solid {verde};padding:10px 14px;">'
-            f'<div style="color:{texto_sec};font-size:8px;text-transform:uppercase;">{label}</div>'
-            f'<div style="color:{verde};font-size:16px;font-weight:bold;">{value}</div>'
-            f'</div></td>'
-        )
+        def footer(self):
+            self.set_y(-15)
+            self.set_draw_color(*cor_borda)
+            self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
+            self.set_font("helvetica", "I", 8)
+            self.set_text_color(*cor_texto_sec)
+            self.cell(0, 8, f"Página {self.page_no()}/{{nb}}", align="C")
 
-    metrics_html = (
-        '<table style="width:100%;border-collapse:collapse;margin:12px 0;"><tr>'
-        + _metric_cell("Total de Leads", f"{total_leads:,}")
-        + _metric_cell("Leads Convertidos", f"{convertidos:,}")
-        + _metric_cell("Taxa de Conversão", f"{taxa:.1f}%")
-        + _metric_cell("Total de Vendas", f"{total_vendas:,}")
-        + '</tr><tr>'
-        + _metric_cell("Valor Liberado", _fmt_brl_pdf(valor_total))
-        + _metric_cell("Ticket Médio", _fmt_brl_pdf(ticket))
-        + _metric_cell("Bancos Ativos", str(bancos_ativos))
-        + _metric_cell("Vendedores Ativos", str(vendedores_ativos))
-        + '</tr></table>'
-    )
+    pdf = RelatorioPDF(orientation="P", unit="mm", format="A4")
+    pdf.alias_nb_pages()
+    pdf.set_auto_page_break(auto=True, margin=20)
 
-    banco_table = _df_to_html_table(por_banco, tema=tema)
-    pie_chart = _embed_chart(chart_images, "pie_banco")
-    produto_table = _df_to_html_table(por_produto, tema=tema)
-    equipe_table = _df_to_html_table(por_equipe, tema=tema)
-    vendedor_table = _df_to_html_table(por_vendedor, max_rows=15, tema=tema)
-    temporal_chart = _embed_chart(chart_images, "temporal")
-    heatmap_chart = _embed_chart(chart_images, "heatmap")
-    faixa_chart = _embed_chart(chart_images, "faixa_etaria")
+    page_w = pdf.w - pdf.l_margin - pdf.r_margin
 
-    css = f"""
-    @page {{
-        size: A4 portrait;
-        margin: 20mm 18mm 25mm 18mm;
-    }}
-    body {{
-        font-family: Helvetica, Arial, sans-serif;
-        color: {texto};
-        background: {fundo};
-        font-size: 10px;
-        line-height: 1.4;
-    }}
-    .header {{
-        text-align: center;
-        color: {texto_sec};
-        font-size: 8px;
-        border-bottom: 1px solid {borda};
-        padding-bottom: 6px;
-        margin-bottom: 10px;
-    }}
-    .cover {{
-        text-align: center;
-        padding: 60px 0 30px 0;
-        border-bottom: 3px solid {verde};
-        margin-bottom: 20px;
-    }}
-    .cover h1 {{
-        color: {verde};
-        font-size: 26px;
-        margin-bottom: 4px;
-    }}
-    .cover h2 {{
-        color: {texto};
-        font-size: 14px;
-        font-weight: normal;
-        margin-bottom: 8px;
-    }}
-    .cover .subtitle {{
-        color: {texto_sec};
-        font-size: 11px;
-    }}
-    .section-title {{
-        color: {verde};
-        font-size: 14px;
-        font-weight: bold;
-        border-bottom: 2px solid {verde};
-        padding-bottom: 4px;
-        margin: 20px 0 10px 0;
-    }}
-    .footer {{
-        text-align: center;
-        color: {texto_sec};
-        font-size: 8px;
-        border-top: 1px solid {borda};
-        padding-top: 6px;
-        margin-top: 15px;
-    }}
-    """
+    def section_title(title: str):
+        pdf.set_font("helvetica", "B", 13)
+        pdf.set_text_color(*cor_verde)
+        pdf.cell(0, 9, title, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_draw_color(*cor_verde)
+        pdf.set_line_width(0.6)
+        pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+        pdf.ln(4)
 
-    sections_page2 = f"""
-    <div class="section-title">Performance por Banco</div>
-    {banco_table}
-    {pie_chart}
+    def fmt_cell_val(col: str, val):
+        if pd.isna(val):
+            return ""
+        if isinstance(val, float):
+            if "%" in col or "Taxa" in col:
+                return f"{val:.1f}%"
+            if "Valor" in col or "Ticket" in col or "Médio" in col:
+                return _fmt_brl_pdf(val)
+            if val == int(val):
+                return f"{int(val):,}".replace(",", ".")
+            return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return str(val)
 
-    <div class="section-title">Performance por Produto</div>
-    {produto_table}
-    """
+    def col_align(col: str) -> str:
+        if "Valor" in col or "Ticket" in col or "Médio" in col or "%" in col:
+            return "R"
+        return "L"
 
-    sections_page3 = f"""
-    <div class="section-title">Performance por Equipe</div>
-    {equipe_table}
+    def draw_table(df: pd.DataFrame, max_rows: int = 0, top3: bool = False):
+        rows = df.head(max_rows) if max_rows > 0 else df
+        n_cols = len(rows.columns)
+        col_w = page_w / n_cols
 
-    <div class="section-title">Top 15 Vendedores</div>
-    {vendedor_table}
-    """
+        pdf.set_font("helvetica", "B", 9)
+        pdf.set_fill_color(*cor_verde)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_draw_color(*cor_borda)
+        for col in rows.columns:
+            pdf.cell(col_w, 8, str(col), border=1, fill=True, align="C")
+        pdf.ln()
 
-    sections_charts = ""
-    if temporal_chart:
-        sections_charts += f'<div class="section-title">Evolução Temporal</div>{temporal_chart}'
-    if heatmap_chart:
-        sections_charts += f'<div class="section-title">Banco x Produto</div>{heatmap_chart}'
-    if faixa_chart:
-        sections_charts += f'<div class="section-title">Faixa Etária</div>{faixa_chart}'
+        medalhas = {0: "#1", 1: "#2", 2: "#3"}
+        pdf.set_font("helvetica", "", 8.5)
+        for i, (_, row) in enumerate(rows.iterrows()):
+            bg = cor_row_even if i % 2 == 0 else cor_row_odd
+            pdf.set_fill_color(*bg)
+            pdf.set_text_color(*cor_texto)
 
-    html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8" />
-    <style>{css}</style>
-</head>
-<body>
-    <div class="header">Grupo Digital - Soluções Financeiras | {data_rel}</div>
+            is_top = top3 and i < 3
+            if is_top:
+                pdf.set_font("helvetica", "B", 8.5)
+            else:
+                pdf.set_font("helvetica", "", 8.5)
 
-    <div class="cover">
-        <h1>Grupo Digital</h1>
-        <h2>Relatório de Performance de Leads</h2>
-        <div class="subtitle">{periodo_txt} &middot; Gerado em {data_rel}</div>
-    </div>
+            for j, col in enumerate(rows.columns):
+                val_str = fmt_cell_val(col, row[col])
+                if top3 and j == 0 and i in medalhas:
+                    val_str = f"{medalhas[i]} {val_str}"
+                a = col_align(col)
+                pdf.cell(col_w, 7, val_str, border=1, fill=True, align=a)
+            pdf.ln()
+        pdf.ln(3)
 
-    <div class="section-title">Indicadores Gerais</div>
-    {metrics_html}
+    def insert_chart(key: str):
+        if key not in chart_images or not chart_images[key]:
+            return
+        img_bytes = chart_images[key]
+        tmp = io.BytesIO(img_bytes)
+        img_w = page_w * 0.85
+        x_pos = pdf.l_margin + (page_w - img_w) / 2
+        if pdf.get_y() + 80 > pdf.h - 25:
+            pdf.add_page()
+        pdf.image(tmp, x=x_pos, w=img_w)
+        pdf.ln(5)
 
-    <pdf:nextpage />
+    # ── PÁGINA 1: CAPA + MÉTRICAS ────────────────────────────────────────
+    pdf.add_page()
+    if is_dark:
+        pdf.set_fill_color(*cor_fundo)
+        pdf.rect(0, 0, pdf.w, pdf.h, "F")
 
-    {sections_page2}
+    pdf.ln(25)
+    pdf.set_font("helvetica", "B", 28)
+    pdf.set_text_color(*cor_verde)
+    pdf.cell(0, 14, "Grupo Digital", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("helvetica", "", 14)
+    pdf.set_text_color(*cor_texto)
+    pdf.cell(0, 9, "Relatório de Performance de Leads", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("helvetica", "", 11)
+    pdf.set_text_color(*cor_texto_sec)
+    pdf.cell(0, 8, f"{periodo_txt}  ·  Gerado em {data_rel}", align="C", new_x="LMARGIN", new_y="NEXT")
 
-    <pdf:nextpage />
+    pdf.ln(3)
+    pdf.set_draw_color(*cor_verde)
+    pdf.set_line_width(0.8)
+    pdf.line(pdf.l_margin + 30, pdf.get_y(), pdf.w - pdf.r_margin - 30, pdf.get_y())
+    pdf.ln(12)
 
-    {sections_page3}
+    section_title("Indicadores Gerais")
 
-    {"<pdf:nextpage />" + sections_charts if sections_charts else ""}
+    metrics = [
+        ("Total de Leads", f"{resumo_geral.get('Total de Leads', 0):,}".replace(",", ".")),
+        ("Leads Convertidos", f"{resumo_geral.get('Leads Convertidos', 0):,}".replace(",", ".")),
+        ("Taxa de Conversão", f"{resumo_geral.get('Taxa de Conversão (%)', 0):.1f}%"),
+        ("Total de Vendas", f"{resumo_geral.get('Total de Vendas', 0):,}".replace(",", ".")),
+        ("Valor Liberado", _fmt_brl_pdf(resumo_geral.get("Valor Total Liberado", 0))),
+        ("Ticket Médio", _fmt_brl_pdf(resumo_geral.get("Ticket Médio", 0))),
+        ("Bancos Ativos", str(resumo_geral.get("Bancos Ativos", 0))),
+        ("Vendedores Ativos", str(resumo_geral.get("Vendedores Ativos", 0))),
+    ]
 
-    <div class="footer">
-        Grupo Digital - Soluções Financeiras | Relatório gerado automaticamente
-    </div>
-</body>
-</html>"""
+    card_w = (page_w - 9) / 4
+    card_h = 18
+    for idx, (label, value) in enumerate(metrics):
+        col_idx = idx % 4
+        if col_idx == 0 and idx > 0:
+            pdf.ln(card_h + 3)
+        x = pdf.l_margin + col_idx * (card_w + 3)
+        y = pdf.get_y()
 
-    buffer = io.BytesIO()
-    status = pisa.CreatePDF(html_content, dest=buffer, encoding="utf-8")
-    if status.err:
-        raise RuntimeError("Erro ao gerar PDF. Verifique os dados do relatório.")
-    return buffer.getvalue()
+        pdf.set_fill_color(*cor_card)
+        pdf.set_draw_color(*cor_borda)
+        pdf.rect(x, y, card_w, card_h, "DF")
+        pdf.set_fill_color(*cor_verde)
+        pdf.rect(x, y, 1.5, card_h, "F")
+
+        pdf.set_xy(x + 4, y + 2)
+        pdf.set_font("helvetica", "", 7)
+        pdf.set_text_color(*cor_texto_sec)
+        pdf.cell(card_w - 6, 5, label.upper())
+        pdf.set_xy(x + 4, y + 8)
+        pdf.set_font("helvetica", "B", 13)
+        pdf.set_text_color(*cor_verde)
+        pdf.cell(card_w - 6, 8, value)
+
+    pdf.ln(card_h + 8)
+
+    # ── PÁGINA 2: BANCO + PRODUTO ────────────────────────────────────────
+    pdf.add_page()
+    if is_dark:
+        pdf.set_fill_color(*cor_fundo)
+        pdf.rect(0, 0, pdf.w, pdf.h, "F")
+
+    section_title("Performance por Banco")
+    draw_table(por_banco, top3=True)
+    insert_chart("pie_banco")
+
+    section_title("Performance por Produto")
+    draw_table(por_produto, top3=True)
+
+    # ── PÁGINA 3: EQUIPE + VENDEDOR ──────────────────────────────────────
+    pdf.add_page()
+    if is_dark:
+        pdf.set_fill_color(*cor_fundo)
+        pdf.rect(0, 0, pdf.w, pdf.h, "F")
+
+    section_title("Performance por Equipe")
+    draw_table(por_equipe, top3=True)
+
+    section_title("Top 15 Vendedores")
+    draw_table(por_vendedor, max_rows=15, top3=True)
+
+    # ── PÁGINA 4: GRÁFICOS ───────────────────────────────────────────────
+    has_charts = any(k in chart_images and chart_images[k] for k in ("temporal", "heatmap", "faixa_etaria"))
+    if has_charts:
+        pdf.add_page()
+        if is_dark:
+            pdf.set_fill_color(*cor_fundo)
+            pdf.rect(0, 0, pdf.w, pdf.h, "F")
+
+        if "temporal" in chart_images and chart_images["temporal"]:
+            section_title("Evolução Temporal")
+            insert_chart("temporal")
+
+        if "heatmap" in chart_images and chart_images["heatmap"]:
+            section_title("Banco × Produto")
+            insert_chart("heatmap")
+
+        if "faixa_etaria" in chart_images and chart_images["faixa_etaria"]:
+            section_title("Faixa Etária")
+            insert_chart("faixa_etaria")
+
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
